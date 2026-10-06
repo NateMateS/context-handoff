@@ -1,0 +1,40 @@
+{
+  "name": "context-handoff",
+  "version": "1.0.0",
+  "description": "Long sessions that don't run out of room: at a natural stopping point Claude writes a handoff, the session restarts on it and keeps working, with your exact words, skills and plan carried over.",
+  "author": {
+    "name": "NateMateS",
+    "url": "https://github.com/NateMateS"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "softTokens": {
+      "type": "number",
+      "title": "Soft threshold (tokens)",
+      "description": "Context size at which the model is asked to hand off at its next natural stopping point. Capped at 60% of the context window.",
+      "default": 300000
+    },
+    "firmTokens": {
+      "type": "number",
+      "title": "Firm threshold (tokens)",
+      "description": "Context size at which the model is told to stop starting work and hand off now. Capped at 80% of the context window.",
+      "default": 450000
+    }
+  },
+  "homepage": "https://github.com/NateMateS/context-handoff#readme",
+  "documentationUrl": "https://github.com/NateMateS/context-handoff#readme",
+  "supportUrl": "https://github.com/NateMateS/context-handoff/issues",
+  "privacyPolicyUrl": "https://github.com/NateMateS/context-handoff/blob/master/PRIVACY.md",
+  "repository": "https://github.com/NateMateS/context-handoff",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "context-window",
+    "handoff",
+    "compaction",
+    "auto-compact",
+    "long-running",
+    "autonomous",
+    "session-continuity"
+  ]
+}

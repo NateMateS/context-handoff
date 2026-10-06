@@ -1,0 +1,14 @@
+{
+  "name": "natemates",
+  "owner": {
+    "name": "NateMateS"
+  },
+  "description": "Claude Code plugins by NateMateS.",
+  "plugins": [
+    {
+      "name": "context-handoff",
+      "source": "./",
+      "description": "Long sessions that don't run out of room: at a natural stopping point Claude writes a handoff, the session restarts on it and keeps working, with your exact words, skills and plan carried over."
+    }
+  ]
+}

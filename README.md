@@ -4,7 +4,7 @@
 
 ## Why it works
 
-- **It stops at a natural point.** Claude is asked to bring the work in progress to a clean, resumable state and start nothing new. Nothing is cut off mid-edit.
+- **It stops where stopping is cheap.** A handoff drops everything Claude has loaded, so the fresh context has to rebuild whatever its next step needs. Claude is told how much room it has left, keeps working until the task in progress is finished and checked, and then hands off instead of starting the next one. It doesn't hand off between reading code and acting on it.
 - **The model that did the work writes the handoff.** The goal, status, decisions, verification, gotchas and next step come from the one context that actually knows them, written for a reader with none of its memory.
 - **What code can record, code records.** Your messages, the skills in use, the plan you approved, the task list, git state, files touched, commands run, pasted images, background work and scheduled wakeups are captured by the mod and carried over exactly. None of it depends on what a model remembers.
 - **Your words always win.** Every message you sent this session is carried over verbatim, across every handoff. Plugin prompts, command output and notifications are kept out of that record. The fresh context is told that where anything disagrees with your words, they win.
@@ -24,7 +24,7 @@ These numbers come from a real session on Claude Code 2.1.291. Both times, after
 
 ## How it works
 
-1. **Soft notice.** Once the context passes the soft threshold (300k by default), Claude is asked to reach a natural stopping point and start nothing new.
+1. **Soft notice.** Once the context passes the soft threshold (300k by default), Claude is told the handoff isn't urgent and how much room is left before the firm threshold: in tokens, and in steps at this context's own pace. It finishes the task in progress, or the part of it that leaves the least to rebuild, and hands off before starting the next one.
 2. **Handoff.** Claude calls `handoff_ready` with the handoff and the names of the skills that still apply. A handoff that is too short is refused, and so is calling the tool without having been asked.
 3. **Reset and resume.** When the turn ends, the conversation is replaced by the handoff plus the mod's record, and work continues from the next step. If the next step is to wait for you, the fresh context says where things stand and waits.
 4. **If Claude doesn't hand off:**
@@ -38,7 +38,7 @@ These numbers come from a real session on Claude Code 2.1.291. Both times, after
 
 One message. It opens with which handoff this is, when it was written, at what context size and where it is archived. Then it explains how to read what follows:
 
-- **Your messages win.** They are your exact words, and anything that disagrees with them loses.
+- **Your messages win.** They are your exact words, and anything that disagrees with them loses. Where two of them disagree, the later one wins.
 - **Recorded sections are exact.** They were captured by code, as of the handoff.
 - **The handoff can be wrong.** It is the previous context's understanding, so the fresh context checks anything marked unverified.
 - **No recap.** The fresh context doesn't summarize the handoff back to you or announce it.
@@ -54,9 +54,9 @@ After that come two halves, and nothing appears in both. The model's handoff com
 5. **Verification.** What is proven, with the exact build and test commands and their last result.
 6. **Open questions.** Anything unresolved, waiting on you, or assumed but not checked.
 7. **Gotchas.** Anything the next context would otherwise rediscover the hard way.
-8. **Next step.** Answering your latest message comes first if it wasn't fully answered. If the work needs you, the step is to wait for you.
+8. **Next step.** The next action and what to read first for it, so the fresh context loads only what it needs. Answering your latest message comes first if it wasn't fully answered. If the work needs you, the step is to wait for you.
 
-The previous context writes for a reader with none of its memory. When it began from a handoff itself, it carries forward every decision, gotcha and open question that still holds, so knowledge doesn't wear away along a chain of handoffs.
+The previous context writes for a reader with none of its memory. When it began from a handoff itself, it carries forward every decision, gotcha and open question that still holds, written out rather than pointed to, so knowledge doesn't wear away along a chain of handoffs.
 
 **Recorded by the mod,** word for word, in reading order:
 
@@ -64,7 +64,7 @@ The previous context writes for a reader with none of its memory. When it began 
 |---|---|
 | Skills still in use | The full text of each skill that still applies. Claude names the ones that still apply, and skills you asked for (`/name`, or by name as a skill) are always kept. If Claude names none, all are kept. Skills loaded before the mod was are found too, in the text the model reads. Up to 40,000 characters; any past that are listed by name, to be loaded again. |
 | Your messages | Every message you sent this session, oldest first, across every handoff. They are captured as you send them, labelled by where they came from, so plugin prompts, command output, notifications and skill text can't pass for your words. Your answers to Claude's questions count, and so do slash commands with arguments. Your first message always stays; the rest are kept newest first, up to 12,000 characters, with a count of any left out. A message over 2,000 characters is cut, and every message is kept in full in `.claude/handoffs/<session>-messages.md`. |
-| Approved plan | The last plan you approved, word for word: an agreement, not a summary. |
+| Approved plan | The last plan you approved, word for word: an agreement, not a summary. It is carried across every handoff until you approve a newer one. |
 | Task list | The task list as Claude last left it, from `TodoWrite` or from `TaskCreate` and `TaskUpdate`, carried forward across handoffs. Once every item on a list is done, the list is cleared, the same way Claude Code clears it. Up to 30 items; past that, the oldest finished ones are left out. |
 | Git state | Branch, uncommitted changes and the last five commits. |
 | Files edited, files read | Paths only, from the file tools. Files changed by shell commands aren't tracked, and the record says so. Contents aren't loaded, and the fresh context is told to read a file again before editing it. |
@@ -73,7 +73,7 @@ The previous context writes for a reader with none of its memory. When it began 
 | Background work | Subagents, background shells, monitors and workflows still running, with the IDs that let `TaskStop` stop them, plus earlier subagents with the IDs that let `SendMessage` continue them. |
 | Scheduled wakeups | Prompts that `/loop`, `ScheduleWakeup` or `CronCreate` will send to the session later, so the fresh context knows what will wake it and why. |
 | The whole session | Every transcript file the session has written. A resumed session continues in a new one, and compaction never deletes them. Together they hold every earlier message and tool result, and a search command finds any detail without reading them whole. |
-| Earlier handoffs | The session's last few handoffs, to look back at when a detail matters that the latest one leaves out. |
+| Earlier handoffs | The session's last few handoffs, to look back at when a detail matters that the latest one leaves out, and the file name that finds every one of them. Each is named by its session and number, so a search never mixes in the handoffs of another session in the same project. |
 | What you last read | Claude's last reply before the handoff began, so a question it asked you isn't lost. |
 
 The record usually adds a few thousand tokens. At most it adds about 20,000, nearly all of that from long skills.
@@ -86,16 +86,16 @@ Your own `/compact` and auto-compact get the same record after Claude Code's sum
 ````text
 This session continues earlier work from a handoff written by the previous context. This is
 handoff 2 of the session, written 2026-10-06 21:59 UTC at 312k tokens. It is saved in
-.claude/handoffs/2026-10-06T21-59-30-836Z.md.
+.claude/handoffs/5f0c2a91-handoff-2.md.
 
 You are the same assistant, continuing the same work for the same user; the previous
-context handed off because its window was filling up. How to read what follows:
+context handed off because it had grown large. How to read what follows:
 - The user's messages are their exact words. Where anything else here disagrees with them,
-  they win.
+  they win; where two of their messages disagree, the later one wins.
 …
 
 ### Skills still in use: pdf
-These were loaded in an earlier context and still apply: follow them as if just invoked.
+Loaded earlier in this session and still in force: follow their instructions wherever the work calls for them. Being carried here does not ask you to start anything; the handoff says what to do next.
 
 #### pdf
 Base directory for this skill: …
@@ -143,7 +143,7 @@ the invoices fixture) and run task #3.
 ## Details
 
 - **Loop guard.** A fresh context has to grow at least 40k tokens past its own starting size before it can be asked to hand off again, or a quarter of the soft threshold if that's more. A handoff that starts above the threshold can't chain into endless handoffs.
-- **Nothing you type is lost.** A message sent while a handoff is being applied is held and passed on to the fresh context.
+- **Nothing you type is lost.** A message sent while a handoff is being applied is held and passed on to the fresh context, which answers it before the handoff's next step.
 - **Restarts.** If Claude Code restarts, for example after an update, the mod restores its record from the last handoff in the resumed conversation. That covers your messages, the skills, the task list, the handoff count and chain, and the transcript files. `/handoff` says when this happened.
 - **Status line.** While a handoff is pending, the status line shows `handoff: at next stopping point`, `handoff: now`, `handoff: requested` or `handoff: applying`.
 - **Archive.** Every handoff is saved in `.claude/handoffs/` in your project, along with your messages in full and your pasted images. The archive can hold private text, so the mod gives that folder its own `.gitignore` to keep it out of your commits. Delete that `.gitignore` to commit the archive anyway.
@@ -165,7 +165,7 @@ The mod makes no network requests of its own and sends nothing anywhere else. Ev
 
 **Files it writes.** All of them go in `.claude/handoffs/` in your project:
 
-- `<date and time>.md`: each handoff, as Claude wrote it.
+- `<session id>-handoff-<N>.md`: each handoff, as Claude wrote it, numbered within the session. One already on disk is never overwritten.
 - `<session id>-messages.md`: every message you sent in the session, in full.
 - `image-<hash>.png.b64` (or `.jpg`, `.gif`, `.webp`): each image you pasted, as base64 text, named by a hash of its contents. A large one is split into parts (`.b64.2`, ...) that each fit one of the mod's file reads.
 - `.gitignore`, written once and containing `*`: it keeps the archive out of your commits. It is the only file the mod writes that another tool acts on. Delete it if you want to commit the archive.
@@ -178,7 +178,7 @@ It reads back only that archive and the session's own conversation.
 
 **What it adds to the conversation.**
 
-- The handoff notices, once the context passes a threshold. Each says how many tokens are in use and asks for a handoff.
+- The handoff notices, once the context passes a threshold. Each says how much of the window is in use and asks for a handoff. The soft one also says how much room is left before the firm one.
 - If a turn ends without a handoff, a prompt asking for one again; `/handoff now` sends the same request.
 - After the swap, a prompt to continue from the handoff's next step.
 - Any message you typed while the handoff was being applied, word for word.
@@ -204,7 +204,7 @@ It reads back only that archive and the session's own conversation.
 
 ## Install
 
-Requires Claude Code with mods (function-hook plugins). Tested on 2.1.291 and 2.1.292. In a terminal session:
+Requires Claude Code with mods (function-hook plugins). Tested on 2.1.291, 2.1.292 and 2.1.302. In a terminal session:
 
 ```
 /plugin install context-handoff --marketplace NateMateS/context-handoff
@@ -242,8 +242,8 @@ Both thresholds are rows in `/config` under context-handoff, stored in `~/.claud
 
 | Setting | Default | What it does |
 |---|---|---|
-| `softTokens` | `300000` | When Claude is asked to wrap up at its next natural stopping point. Capped at 60% of the context window. |
-| `firmTokens` | `450000` | When it is told to stop starting work and hand off now. Capped at 80% of the window. |
+| `softTokens` | `300000` | When Claude is asked to hand off once the task in progress is done. Capped at 60% of the context window. |
+| `firmTokens` | `450000` | When it is told to stop starting work and hand off now. Capped at 80% of the window. The room between the two thresholds is what Claude has to finish its task, so a wider gap means fewer handoffs mid-task. |
 
 With those caps, a model with a 200k window hands off at about 120k (soft) and 160k (firm) without any configuration. To watch a handoff without filling 300k, run `/handoff now`.
 
@@ -271,16 +271,17 @@ claude plugin validate .
 claude plugin test .
 ```
 
-The tests cover:
+The tests use the test kit of Claude Code 2.1.302 or later. They cover:
 
-- the soft and firm notices, the loop guard and configured thresholds;
+- the soft and firm notices and what each tells Claude, the loop guard and configured thresholds;
 - asking again, the fork fallback, the tool gate (and the task bookkeeping it lets through) and the auto-compact backstop;
 - the verbatim record across two handoffs, and the seed's reading order;
 - capturing your words where they enter, and keeping plugin prompts, command output and notices out;
-- carrying skills that were kept, dropped or asked for, including ones only the model's input holds;
-- the last reply, task list (from `TodoWrite` and from `TaskCreate`/`TaskUpdate`, cleared once all of it is done), git state, files and commands;
+- carrying skills that were kept, dropped or asked for, named in full or short, including ones only the model's input holds;
+- the approved plan, carried across handoffs until a newer one replaces it;
+- the last reply (including replies after the soft notice), task list (from `TodoWrite` and from `TaskCreate`/`TaskUpdate`, cleared once all of it is done), git state, files and commands;
 - images kept in parts and shown whole through `handoff_image`, with a damaged image or an unknown name refused;
-- earlier handoffs, full text of long messages written once, earlier subagents, background work and scheduled wakeups;
+- earlier handoffs, saved by session and number and never overwritten, full text of long messages written once, earlier subagents, background work and scheduled wakeups;
 - held messages and a reset that keeps failing;
 - restoring the record after a restart, from both the current and the older seed format;
 - `/handoff`.

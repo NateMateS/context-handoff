@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { imageName, parseRecord, taskList, userAsked } from './register'
+import { carriedSkills, imageName, lastAnswer, parseRecord, skillNames, taskList, userAsked } from './register'
 
 const TOOL = 'mcp__context-handoff__handoff_ready'
 const IMAGE_TOOL = 'mcp__context-handoff__handoff_image'
@@ -9,13 +9,15 @@ type Body = Parameters<typeof test>[1]
 type Engine = Parameters<Extract<Body, Function>>[0]
 type On = Parameters<Extract<Body, Function>>[1]
 
-// A session double: usage, a project root, a file system, and a count of
-// the notices sent. The kit has no transcript store for a plugin's append, so every
-// notice fails into the mod's fallback toast; counting those counts the notices.
+// A session double: usage, a project root, a file system, and the notices sent, read back
+// from the rows the kit stored for the mod's appends.
 function harness($: Engine, on: On, window = 1_000_000) {
+  const session = mock.session(on)
+  const notices = () => session.appended().filter(r => r.door === 'note')
+    .map(r => r.message.content.map(b => (b as { text?: string }).text ?? '').join(''))
   const s = {
     tokens: 100_000,
-    nudges: 0,
+    get nudges() { return notices().length },
     toasts: [] as string[],
     instructions: '',
     files: new Map<string, string>(),
@@ -33,9 +35,7 @@ function harness($: Engine, on: On, window = 1_000_000) {
   on('session.usage', () => ({ value: { startedAt: 0, rateLimits: [], context: { tokens: s.tokens, window } } }))
   on('session.root', () => ({ value: 'H:/proj' }))
   on('ui.toast', ($, e) => {
-    const text = JSON.stringify(e)
-    if (text.includes('handoff notice')) s.nudges++
-    else s.toasts.push(text)
+    s.toasts.push(JSON.stringify(e))
     return { value: undefined }
   })
   // The engine hands paths over in the platform's spelling.
@@ -75,6 +75,7 @@ function harness($: Engine, on: On, window = 1_000_000) {
   return {
     s,
     clock,
+    notices,
     turnEnds: async () => {
       await $.turn.complete({ turnId: 't', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
       await clock.advance(5_000)
@@ -123,8 +124,23 @@ test('a failed archive write does not lose the handoff', async ($, on) => {
   s.failWrites = true
   s.tokens = 320_000
   await step()
-  expect(await ready(HANDOFF)).toContain('Handoff accepted')
+  const result = await ready(HANDOFF)
+  expect(result).toContain('Handoff accepted')
+  expect(result).not.toContain('saved to')
   expect((await compact('plugin')).messages?.[0]?.text).toContain('# Handoff')
+})
+
+test('a handoff is saved under its session and number, never over one already saved', async ($, on) => {
+  const { s, step, ready, turnEnds } = harness($, on)
+  // A count lost to a restart: this process starts at 0, but handoff 1 is already on disk.
+  s.files.set('H:/proj/.claude/handoffs/sess-1-handoff-1.md', 'EARLIER')
+  s.tokens = 320_000
+  await step()
+  expect(await ready(HANDOFF)).toContain('saved to .claude/handoffs/sess-1-handoff-2.md')
+  await turnEnds()
+  expect(s.files.get('H:/proj/.claude/handoffs/sess-1-handoff-1.md')).toBe('EARLIER')
+  expect(s.files.get('H:/proj/.claude/handoffs/sess-1-handoff-2.md')).toBe(HANDOFF.trim())
+  expect(s.seed).toContain('This is handoff 2 of the session')
 })
 
 test('escalates to firm past the firm threshold, once', async ($, on) => {
@@ -135,6 +151,52 @@ test('escalates to firm past the firm threshold, once', async ($, on) => {
   await step()
   await step()
   expect(s.nudges).toBe(2)
+})
+
+test('the soft notice says it is not urgent and how much room is left; the firm one says now', async ($, on) => {
+  const { s, step, notices } = harness($, on)
+  s.tokens = 320_000
+  await step()
+  const soft = notices()[0]!
+  expect(soft).toContain('320k of 1000k tokens used. Hand off at your next natural stopping point; this is not urgent.')
+  expect(soft).toContain('about 130k tokens before the firm notice at 450k')
+  expect(soft).toContain('finish the task or subtask in progress and check it')
+  expect(soft).toContain('instead of starting the next one')
+  s.tokens = 460_000
+  await step()
+  const firm = notices()[1]!
+  expect(firm).toContain('460k of 1000k tokens used: hand off now.')
+  expect(firm).toContain('From 490k, other tools are refused; ToolSearch and the task tools still work.')
+  expect(firm).not.toContain('natural stopping point')
+})
+
+test('the soft notice also tells the room in steps at this context\'s own pace', async ($, on) => {
+  const { s, step, notices } = harness($, on)
+  // 20 steps of 10k each since the context's first step at 100k.
+  await step()
+  for (let i = 0; i < 20; i++) {
+    s.tokens += 10_000
+    await step()
+  }
+  expect(notices()[0]).toContain('300k of 1000k tokens used.')
+  expect(notices()[0]).toContain('about 150k tokens before the firm notice at 450k, roughly 15 more rounds of ' +
+    'tool calls at this context\'s pace: keep working')
+})
+
+test('what the user last read runs past the soft notice, up to the handoff call or a notice that asks for it now', () => {
+  const say = (text: string) => ({ role: 'assistant', text, toolUses: [] })
+  const soft = { role: 'user', toolUses: [],
+    text: '[CONTEXT HANDOFF] 320k of 1000k tokens used. Hand off at your next natural stopping point; this is not urgent.' }
+  const call = { role: 'assistant', text: 'Saving a handoff.',
+    toolUses: [{ tool_use_id: 'h', tool: 'mcp__context-handoff__handoff_ready', input: {} }] }
+  // Work went on after the soft notice: its last reply is what the user read, not the handoff's own words.
+  expect(lastAnswer([say('Reading the roof.'), soft, say('The roof is fixed and its tests pass.'), call,
+    say('Handed off.')] as never)).toBe('The roof is fixed and its tests pass.')
+  // A notice that asks for the handoff now begins it, as the turn-end ask does.
+  const reask = { role: 'user', toolUses: [],
+    text: 'The context-handoff plugin sent a message:\n[CONTEXT HANDOFF] Your turn ended without a handoff.' }
+  expect(lastAnswer([say('One side done.'), soft, say('Both sides are done. Keep the slope?'), reask,
+    say('Writing the handoff.')] as never)).toBe('Both sides are done. Keep the slope?')
 })
 
 test('a context that starts above the threshold waits for real growth', async ($, on) => {
@@ -171,6 +233,8 @@ test('the auto compaction backstop asks for the handoff template', async ($, on)
   const { s, compact } = harness($, on)
   await compact('auto')
   expect(s.instructions).toContain('Next step')
+  // What a handoff carries over from the one before it is written out, never pointed to.
+  expect(s.instructions).toContain('written out in full rather than pointed to')
 })
 
 test("the seed carries the user's messages and changed files verbatim, across handoffs", async ($, on) => {
@@ -240,6 +304,8 @@ test('a message sent while the handoff is applied reaches the fresh context', as
   expect(JSON.stringify(dropped)).toContain('Handing off')
   await turnEnds()
   expect(s.seed).toContain('## The user wrote this while the handoff was being applied\n\nand use tabs')
+  // The fresh context answers it before the Next step, which was written without it.
+  expect(s.submitted.at(-1)).toContain('If it ends with what the user wrote while it was being applied, answer that first')
 })
 
 test('background work still running is recorded in the seed', async ($, on) => {
@@ -291,6 +357,50 @@ test("a /compact of the user's own keeps the record after the summary", async ($
   const r = await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'Keep it short.', toolUses: [] }] })
   expect(r.messages?.length).toBe(2)
   expect(r.messages?.[1]?.text).toContain('1. Keep it short.')
+  expect(r.messages?.[1]?.text).toContain('where two of their messages disagree, the later one wins.')
+})
+
+test('an approved plan is carried across every handoff until a newer one replaces it', async ($, on) => {
+  const { s, step, ready, turnEnds } = harness($, on)
+  s.transcript = [
+    { role: 'user', text: 'Plan the export.', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'p', tool: 'ExitPlanMode', input: { plan: '1. Draft\n\n2. Export' } }] },
+  ]
+  s.tokens = 320_000
+  await step()
+  await ready(HANDOFF)
+  await turnEnds()
+  expect(s.seed).toContain('### The plan the user approved (recorded)\n1. Draft\n\n2. Export')
+  // The next context holds no ExitPlanMode of its own: the plan comes from its seed.
+  s.transcript = [{ role: 'user', text: s.seed, toolUses: [] }, { role: 'user', text: 'Go on.', toolUses: [] }]
+  s.tokens = 50_000
+  await step()
+  s.tokens = 400_000
+  await step()
+  await ready(HANDOFF)
+  await turnEnds()
+  expect(s.seed).toContain('### The plan the user approved (recorded)\n1. Draft\n\n2. Export')
+  expect(parseRecord(s.seed).plan).toBe('1. Draft\n\n2. Export')
+  // A newer approval replaces it.
+  s.transcript = [{ role: 'user', text: s.seed, toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'q', tool: 'ExitPlanMode', input: { plan: '1. Ship' } }] }]
+  s.tokens = 50_000
+  await step()
+  s.tokens = 400_000
+  await step()
+  await ready(HANDOFF)
+  await turnEnds()
+  expect(parseRecord(s.seed).plan).toBe('1. Ship')
+})
+
+test('skills to keep are read as a list, as JSON or comma-separated text, and by their short names', () => {
+  expect(skillNames(['pdf', ' review '])).toEqual(['pdf', 'review'])
+  expect(skillNames('["ideal-audit"]')).toEqual(['ideal-audit'])
+  expect(skillNames('pdf, review')).toEqual(['pdf', 'review'])
+  expect(skillNames(undefined)).toEqual(['*'])
+  const loaded = [{ name: 'anthropic-skills:pdf', text: 'PDF' }, { name: 'review-changes', text: 'REVIEW' }]
+  expect(carriedSkills(loaded, ['pdf'], []).map(sk => sk.name)).toEqual(['anthropic-skills:pdf'])
+  expect(carriedSkills(loaded, [], ['run /review-changes']).map(sk => sk.name)).toEqual(['review-changes'])
 })
 
 test('well past the firm threshold, other tool calls are refused until the handoff', async ($, on) => {
@@ -328,6 +438,8 @@ test('a handoff carries the skills that still apply, and always the ones the use
   expect(s.seed).toContain('AUDIT RULES')
   expect(s.seed).toContain('DESIGN RULES')
   expect(s.seed).not.toContain('PDF RULES')
+  // Carried skills apply where the work calls for them; carrying one is no request to run it.
+  expect(s.seed).toContain('Being carried here does not ask you to start anything')
   // A skill's text is not one of the user's messages.
   expect(s.seed).toContain('1. Is the mod ideal? /ideal-audit')
   expect(s.seed).not.toContain('2. Base directory')
@@ -506,7 +618,13 @@ test('the seed reads in order: guide, skills, messages, state, earlier handoffs,
   for (const t of order) expect(at(t)).toBeGreaterThan(-1)
   for (let i = 1; i < order.length; i++) expect(at(order[i]!)).toBeGreaterThan(at(order[i - 1]!))
   // Only the previous handoff is listed; the one being applied is the seed itself.
-  expect(s.seed.split('### Earlier handoffs')[1]!.match(/\.claude\/handoffs\/[^\s]+\.md/g)?.length).toBe(1)
+  const earlier = s.seed.split('### Earlier handoffs')[1]!.split('\n\n')[0]!
+  expect(earlier.match(/^- .+$/gm)).toEqual(['- .claude/handoffs/sess-1-handoff-1.md'])
+  expect(s.seed).toContain('This is handoff 2 of the session')
+  expect(s.seed).toContain('It is saved in .claude/handoffs/sess-1-handoff-2.md.')
+  // The name that reaches the handoffs not listed, and only this session's.
+  expect(earlier).toContain('Handoff N of this session is saved as .claude/handoffs/sess-1-handoff-N.md, and ' +
+    ".claude/handoffs/sess-1-handoff-*.md matches this session's alone")
   // Messages already written in full are not written again.
   expect(s.files.get('H:/proj/.claude/handoffs/sess-1-messages.md')?.match(/## Message /g)?.length).toBe(2)
 })
@@ -682,7 +800,8 @@ test('after a restart the record is taken back from the seed the session resumed
   await step()
   await ready(HANDOFF)
   await turnEnds()
-  expect(s.seed).toMatch(/This is handoff 3 of the session, written [^\n]+ It is saved in \.claude\/handoffs\/[^\s]+\.md\./)
+  // Saved under the session's first id, the one its messages file already has.
+  expect(s.seed).toMatch(/This is handoff 3 of the session, written [^\n]+ It is saved in \.claude\/handoffs\/old-handoff-3\.md\./)
   expect(s.seed).toContain('Every message, in full, is in .claude/handoffs/old-messages.md.\n' +
     '1. Build the parser.\n2. Also add tests.\n   \n   Keep them fast.\n3. Now ship it.')
   // The same file goes on, numbered on, with nothing written twice.
@@ -739,6 +858,14 @@ test('a seed in the older format is read back too', async ($, on) => {
   expect(s.files.get('H:/proj/.claude/handoffs/old-messages.md')).toContain('## Message 3\n\nNow ship it.')
   expect(s.seed).toContain('- C:/t/old.jsonl')
   expect(s.seed.split('### Earlier handoffs')[1]).toContain('- .claude/handoffs/A.md')
+})
+
+test('a skill list cut short reads back without its last line, in the old wording or the new', () => {
+  for (const line of ['Too long to carry here; invoke them again with the Skill tool: big',
+    'Too long to carry here; load them again with the Skill tool when the work needs them: big']) {
+    const seed = `${PRIOR_SEED.split('\n\n### The user')[0]}\n\n${line}\n\n### The user's messages, oldest first (recorded)\n1. Hi`
+    expect(parseRecord(seed).skills.at(-1)).toEqual({ name: 'review', text: 'REVIEW RULES' })
+  }
 })
 
 test('the task list follows TaskCreate and TaskUpdate by id, and TodoWrite whole', () => {

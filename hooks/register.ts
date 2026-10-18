@@ -38,28 +38,40 @@ const SKILL_LEAD = 'Base directory for this skill:'
 const NOTICE = '[CONTEXT HANDOFF]'
 const SEED_LEAD = 'This session continues earlier work from a handoff written by the previous context.'
 const RECORD_LEAD = '## Recorded by context-handoff'
+// How to read a record: the fresh context's guide opens with these, and so does the record
+// added after any other compaction.
+const READ_RULES = `- The user's messages are their exact words. Where anything else here disagrees with them,
+  they win; where two of their messages disagree, the later one wins.
+- Sections marked "recorded" were captured by code just before this point: exact, but only
+  as of then.`
 const SEED_GUIDE = `You are the same assistant, continuing the same work for the same user; the previous
-context handed off because its window was filling up. How to read what follows:
-- The user's messages are their exact words. Where anything else here disagrees with them,
-  they win.
-- Sections marked "recorded" were captured by code at the handoff: exact, but only as of then.
+context handed off because it had grown large. How to read what follows:
+${READ_RULES}
 - The handoff at the end was written by the previous context: its best understanding, not
   ground truth. Check what it marks unverified before building on it.
 - Do not recap this to the user or announce the handoff; carry on as if nothing happened.`
+const HELD_HEADING = '## The user wrote this while the handoff was being applied'
+// Shared by the old wording ("above, starting with its Next step"), so either is known as the mod's.
+const RESUME_LEAD = 'Continue the work from the handoff above'
 const RESUME =
-  'Continue the work from the handoff above, starting with its Next step. If the Next step ' +
-  'is to wait for the user, tell them in a line or two where things stand and stop.'
+  `${RESUME_LEAD}. If it ends with what the user wrote while it was being applied, answer that ` +
+  'first; otherwise start with its Next step. If the Next step is to wait for the user, tell ' +
+  'them in a line or two where things stand and stop.'
 
 const HANDOFF_TEMPLATE = `Write the handoff as Markdown with these sections, for a reader with none of your
-context: name things fully, give paths, define your shorthand. It is the judgment half: the
-user's messages, skills, approved plan, task list, git state, files, commands, images,
-subagents, earlier handoffs and the path of the full session transcript are recorded with it
-word for word, so refer to them, don't copy them. If this
-context began from a handoff, carry forward every decision, gotcha and open question from it
-that still holds; drop only what is resolved, and say it is resolved.
-1. Goal: what the user wants in the end and what counts as done, with the standing
-   instructions and preferences that shape the work (scope limits, "always" / "never", style),
-   and what they approved or ruled out (committing, pushing, deleting, spending, publishing).
+context: name things fully, give paths, define your shorthand. It is the judgment half. The
+record beside it already holds, word for word, the user's messages, the skills still in use,
+the approved plan, the task list, git state, the last commands, pasted images and background
+work, and the paths of the files touched and of the session's full transcript: point to
+those, don't copy them. Everything else the next context needs goes in the handoff itself.
+The record also lists earlier handoffs, but the next context opens one only when it knows
+what to look for there, and nothing tells it what this handoff left out. So if this context
+began from a handoff, carry over every decision, gotcha and open question from it that still
+holds, written out in full rather than pointed to; drop only what is resolved, and say so.
+1. Goal: what the user wants in the end and what counts as done; every standing instruction
+   and preference that shapes the work (scope limits, "always" / "never", style), wherever it
+   was given, since older messages can drop out of the record; and what they approved or
+   ruled out (committing, pushing, deleting, spending, publishing).
 2. Status: each task or subtask, marked done / in progress / not started, and where the
    one in progress stands exactly (what is half-done, what state files are in).
 3. Decisions: what was decided and why, including approaches tried and rejected, and why.
@@ -69,19 +81,40 @@ that still holds; drop only what is resolved, and say it is resolved.
    and their last result), and what is still unverified.
 6. Open questions: anything unresolved, waiting on the user, or assumed but not checked.
 7. Gotchas: anything non-obvious the next instance would otherwise rediscover the hard way.
-8. Next step: the exact next action, then the remaining plan in order. If the user's latest
-   message is not fully answered, answering it comes first. If the work is done or needs
-   the user, write "Wait for the user:" and what they need to answer or review.`
+8. Next step: the exact next action and what to read first for it (paths, line ranges), so
+   the next context loads only what it needs; then the remaining plan in order. If the
+   user's latest message is not fully answered, answering it comes first. If the work is
+   done or needs the user, write "Wait for the user:" and what they need to answer or review.`
+
+// The soft notice's own words: what tells it apart from every notice that asks for a handoff now.
+const SOFT_ASK = 'Hand off at your next natural stopping point'
 
 const POLICY = `# Context handoff
-When a message headed ${NOTICE} appears, the context window is filling up.
-- Do not start a new subtask. Finish the unit of work in progress, or park it in a
-  clean, resumable state. Never cut a task in half just to hit a token number.
-- Then call the ${TOOL} tool with the handoff as its \`handoff\` argument, and end your turn
-  without further work. ${HANDOFF_TEMPLATE}
-- The conversation is then replaced by the handoff and continues on its own; the user
-  does not need to act. Pass \`skills\`: the loaded skills that still apply to the
-  remaining work; skills the user asked for are kept regardless.
+When this context grows large, the session hands off to a fresh one: you write a handoff,
+the conversation is replaced by it, and the work goes on. The fresh context starts from
+your handoff and a record kept by code (the user's messages, the task list, git state, the
+files touched and more), nothing else. Whatever you have loaded here (files read, code
+traced, output examined, a design worked out) it has to rebuild before it can act on it,
+so where you hand off decides what the handoff costs.
+
+A ${NOTICE} message asks for a handoff in one of two ways:
+- "${SOFT_ASK}": not urgent. It says how much room is left before a
+  firm notice; until that notice comes, keep working as you were, without counting tokens.
+  Hand off at the first point where the remaining work needs little of what you now hold:
+  the task or subtask in progress finished and checked, the user's question answered, or
+  a decision only the user can make. If the task in progress fits in the room left,
+  finish it first; if it cannot, stop at the milestone inside it that leaves the least to
+  rebuild, such as a part finished and tested. A pause is not a stopping point just
+  because nothing is half-edited: after reading, tracing or designing, carry out what that
+  understanding was for before you hand off, or the next context has to redo it. Once
+  the task is done, hand off instead of starting the next one.
+- "Now": start nothing new, bring what is in progress to a resumable state, and hand off.
+
+To hand off, call the ${TOOL} tool with the handoff as its \`handoff\` argument, and end your
+turn without further work. ${HANDOFF_TEMPLATE}
+The conversation is then replaced by the handoff and continues on its own; the user does not
+need to act. Pass \`skills\`, a list of the loaded skills that still apply to the remaining
+work, named as you invoked them; skills the user asked for are kept regardless.
 Never call ${TOOL} unless a ${NOTICE} message asked for it.`
 
 const REASK =
@@ -115,6 +148,9 @@ const SAVED = { plugin: 'context-handoff', key: 'saved' } as const
 const RESTORED = { plugin: 'context-handoff', key: 'restored' } as const
 const HANDOFFS = { plugin: 'context-handoff', key: 'handoffs' } as const
 const APPLYING = { plugin: 'context-handoff', key: 'applying' } as const
+const PACE = { plugin: 'context-handoff', key: 'pace' } as const
+// Below this many steps, a context's pace says too little to put a number on the room left.
+const MIN_PACE_STEPS = 10
 const HOLDING = { plugin: 'context-handoff', key: 'holding' } as const
 // How long a handoff, from acceptance through its application, may hold the user's messages.
 const APPLY_WINDOW_MS = 60_000
@@ -145,6 +181,7 @@ async function reset($: EngineInterface) {
   await $.state.set(STAGE, 'none')
   await $.state.set(HANDOFF, '')
   await $.state.set(BASELINE, -1)
+  await $.state.set(PACE, { start: -1, steps: 0 })
   await $.state.set(REASKED, false)
   await $.state.set(APPLYING, 0)
   await $.state.set(HOLDING, 0)
@@ -189,7 +226,7 @@ export function userMessages(messages: readonly SessionMessage[]): string[] {
   for (const m of messages) {
     if (m.role !== 'user' || (m.toolResults?.length ?? 0) > 0) continue
     const text = m.text.replace(HARNESS_BLOCK, '').trim()
-    if (text === '' || text.startsWith(NOTICE) || text.startsWith(SEED_LEAD) || text.startsWith(RESUME)) continue
+    if (text === '' || text.startsWith(NOTICE) || text.startsWith(SEED_LEAD) || text.startsWith(RESUME_LEAD)) continue
     if (fromPlugin(text) || text.startsWith('(Re-invocation of /')) continue
     if (text.startsWith(RECORD_LEAD) || isSkillBody(text)) continue
     out.push(text)
@@ -292,14 +329,36 @@ export function userAsked(name: string, log: readonly string[]): boolean {
   return log.some(t => slash.test(t) || named.test(t))
 }
 
-/** The skills a handoff carries: the user's always, the rest as the handoff chose. */
+const shortName = (name: string) => name.slice(name.lastIndexOf(':') + 1)
+
+/**
+ * The skills a handoff carries: the user's always, the rest as the handoff chose. A name the
+ * handoff gives without its plugin prefix ("pdf" for "anthropic-skills:pdf") still counts.
+ */
 export function carriedSkills(skills: readonly Skill[], keep: readonly string[], log: readonly string[]): Skill[] {
   const all = keep.includes('*')
-  return skills.filter(s => all || keep.includes(s.name) || userAsked(s.name, log))
+  const kept = (s: Skill) => keep.some(n => n === s.name || shortName(n) === shortName(s.name))
+  return skills.filter(s => all || kept(s) || userAsked(s.name, log))
+}
+
+/** The `skills` a handoff names: a list, or the same list sent as JSON or comma-separated text; none given keeps all. */
+export function skillNames(raw: unknown): string[] {
+  let value = raw
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw)
+    } catch {
+      value = raw.split(',')
+    }
+  }
+  if (!Array.isArray(value)) return ['*']
+  return value.filter((n): n is string => typeof n === 'string').map(n => n.trim()).filter(n => n !== '')
 }
 
 const SKILLS_HEADING = '### Skills still in use'
-const TOO_LONG = 'Too long to carry here; invoke them again with the Skill tool:'
+const TOO_LONG = 'Too long to carry here; load them again with the Skill tool when the work needs them:'
+// The same line as older records wrote it, so one read back after a restart is still understood.
+const TOO_LONG_BEFORE = 'Too long to carry here; invoke them again with the Skill tool:'
 
 function skillsBlock(skills: readonly Skill[]): string {
   if (skills.length === 0) return ''
@@ -316,7 +375,8 @@ function skillsBlock(skills: readonly Skill[]): string {
   }
   // The heading names every skill whose text follows, so the record can be read back exactly.
   const parts = [`${SKILLS_HEADING}${full.length > 0 ? `: ${full.map(s => s.name).join(', ')}` : ''}\n` +
-    'These were loaded in an earlier context and still apply: follow them as if just invoked.']
+    'Loaded earlier in this session and still in force: follow their instructions wherever the work ' +
+    'calls for them. Being carried here does not ask you to start anything; the handoff says what to do next.']
   for (const s of full) parts.push(`#### ${s.name}\n${s.text}`)
   if (named.length > 0) parts.push(`${TOO_LONG} ${named.join(', ')}`)
   return parts.join('\n\n')
@@ -454,9 +514,12 @@ export function taskList(messages: readonly SessionMessage[], carried: readonly 
 
 /** What the user last read from the model before the handoff began: the reply they may be answering. */
 export function lastAnswer(messages: readonly SessionMessage[]): string {
-  let end = messages.length
-  const asked = messages.findIndex(m => m.role === 'user' && m.text.slice(0, 300).includes(NOTICE))
-  if (asked >= 0) end = asked
+  // The handoff begins at the call that writes it, or at a notice that asks for it now. The
+  // soft notice does not begin it: work, and replies the user reads, go on after it.
+  let end = messages.findIndex(m =>
+    (m.role === 'user' && m.text.slice(0, 300).includes(NOTICE) && !m.text.includes(SOFT_ASK)) ||
+    m.toolUses.some(u => u.tool === `mcp__context-handoff__${TOOL}`))
+  if (end < 0) end = messages.length
   for (let i = end - 1; i >= 0; i--) {
     const m = messages[i]!
     if (m.role === 'assistant' && m.text.trim() !== '') return clip(m.text.trim(), MAX_ANSWER_CHARS)
@@ -568,6 +631,7 @@ const bullets = (items: readonly string[]) => items.map(i => `- ${i}`).join('\n'
 // The headings a record is read back by, after a restart.
 const LOG_HEADING = '### The user\'s messages, oldest first (recorded)'
 const TASKS_HEADING = '### Task list (recorded)'
+const PLAN_HEADING = '### The plan the user approved (recorded)'
 const WHOLE_HEADING = '### The whole session, word for word (recorded)'
 const CHAIN_HEADING = '### Earlier handoffs in this session, newest last (recorded)'
 
@@ -585,7 +649,7 @@ function recordBlock(r: Carried): string {
     parts.push(`${LOG_HEADING}\n${notes === '' ? '' : `${notes}\n`}` +
       r.log.map((t, i) => `${i + 1}. ${t.replaceAll('\n', '\n   ')}`).join('\n'))
   }
-  if (r.plan !== '') parts.push(`### The plan the user approved (recorded)\n${r.plan}`)
+  if (r.plan !== '') parts.push(`${PLAN_HEADING}\n${r.plan}`)
   if (r.tasks.length > 0) parts.push(`${TASKS_HEADING}\n${bullets(r.tasks)}`)
   if (r.git !== '') parts.push(`### Git state (recorded)\n\`\`\`\n${r.git}\n\`\`\``)
   if (r.changed.length > 0) {
@@ -621,8 +685,13 @@ function recordBlock(r: Carried): string {
       `\`grep -n -i -o -E '.{0,300}TERM.{0,300}' ${r.transcripts.map(t => `"${t}"`).join(' ')} | head -20\`.`)
   }
   if (r.chain.length > 0) {
+    // Only the last few are listed; the name accept() gives reaches the rest. A session begun
+    // before handoffs were named that way has no such name to give.
+    const name = /^(.+-handoff-)\d+\.md$/.exec(r.chain.at(-1)!)?.[1]
+    const rest = name === undefined ? '' : ` Handoff N of this session is saved as ${name}N.md, and ` +
+      `${name}*.md matches this session's alone: the folder also holds other sessions' handoffs.`
     parts.push(`${CHAIN_HEADING}\nRead one when a past decision or detail matters that the handoff below ` +
-      `leaves out.\n${bullets(r.chain)}`)
+      `leaves out.${rest}\n${bullets(r.chain)}`)
   }
   if (r.answer !== '') parts.push(`### What the user last read from you (recorded)\n${r.answer}`)
   return parts.join('\n\n')
@@ -647,6 +716,7 @@ type Prior = {
   transcripts: string[]
   messagesFile: string
   tasks: string[]
+  plan: string
 }
 
 // A section's text: from below its heading to the next recorded heading. Message lines are
@@ -678,7 +748,8 @@ export function parseRecord(text: string): Prior {
   const skills: Skill[] = []
   const held = section(record, SKILLS_HEADING)
   if (held !== undefined) {
-    const body = held.body.replace(new RegExp(`\\n\\n${escapeRegExp(TOO_LONG)}[^\\n]*$`), '')
+    const tooLong = `(${escapeRegExp(TOO_LONG)}|${escapeRegExp(TOO_LONG_BEFORE)})`
+    const body = held.body.replace(new RegExp(`\\n\\n${tooLong}[^\\n]*$`), '')
     const names = held.line.startsWith(`${SKILLS_HEADING}: `) ? held.line.slice(SKILLS_HEADING.length + 2).split(', ') : []
     let from = names.length > 0 ? body.indexOf(`\n\n#### ${names[0]}\n`) : -1
     for (let i = 0; i < names.length && from >= 0; i++) {
@@ -709,6 +780,7 @@ export function parseRecord(text: string): Prior {
     transcripts,
     messagesFile: /Every message, in full, is in (.+?)\.$/m.exec(messages)?.[1] ?? '',
     tasks: listed(section(record, TASKS_HEADING)?.body),
+    plan: section(record, PLAN_HEADING)?.body.trim() ?? '',
   }
 }
 
@@ -737,20 +809,22 @@ async function restore($: EngineInterface, prior: Prior | undefined) {
   await $.state.set(RESTORED, true)
 }
 
-// The one file that holds every message in full: the session's, named when it was first
-// written. A record in the older format does not name it; its transcript's session id does.
-// Returns that session id: the file is .claude/handoffs/<id>-messages.md.
-async function messagesFile($: EngineInterface, root: string, transcripts: readonly string[]): Promise<string> {
+// The session's id as the archive names it: the one its messages file was first written
+// under. A record in the older format does not name that file; its transcript's session id does.
+async function archiveId($: EngineInterface, root: string, transcripts: readonly string[]): Promise<string> {
   const known = (await $.state.get(MESSAGES_FILE)).value ?? ''
   if (known !== '') return known.replace(/^.*[\\/]/, '').replace(/-messages\.md$/, '')
-  let id = await $.session.id()
   for (const t of transcripts) {
     const earlier = t.split(/[\\/]/).pop()!.replace(/\.jsonl$/, '')
-    if (await $.fs.exists(`${root}/.claude/handoffs/${earlier}-messages.md`)) {
-      id = earlier
-      break
-    }
+    if (await $.fs.exists(`${root}/.claude/handoffs/${earlier}-messages.md`)) return earlier
   }
+  return await $.session.id()
+}
+
+// The one file that holds every message in full: the session's, named when it was first
+// written. Returns that session id: the file is .claude/handoffs/<id>-messages.md.
+async function messagesFile($: EngineInterface, root: string, transcripts: readonly string[]): Promise<string> {
+  const id = await archiveId($, root, transcripts)
   await $.state.set(MESSAGES_FILE, `${ARCHIVE_DIR}/${id}-messages.md`)
   return id
 }
@@ -780,26 +854,34 @@ async function capture($: EngineInterface, text: string) {
   await $.state.set(CAPTURING, true)
 }
 
-// Holds the handoff and keeps a copy for people to read later.
+// Holds the handoff and keeps a copy for people and later contexts to look back at.
 async function accept($: EngineInterface, text: string, keepSkills: readonly string[] = ['*']): Promise<string> {
   await $.state.set(HANDOFF, text)
   await $.state.set(KEEP_SKILLS, [...keepSkills])
   // From here the old context is on its way out: hold what arrives for the fresh one.
   await $.state.set(HOLDING, Date.now())
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const archived = `${ARCHIVE_DIR}/${stamp}.md`
+  // After a restart the count and the session's id come back with the record: take it first.
+  await restore($, lastRecord(await $.session.messages().catch(() => [])))
+  let n = ((await $.state.get(HANDOFFS)).value ?? 0) + 1
+  let archived = ''
   await $.state.set(SAVED, '')
   try {
     const root = await $.session.root()
     await ignoreArchive($, root)
-    await $.fs.write(`${root}/.claude/handoffs/${stamp}.md`, text)
+    // Named by session and number: other sessions in the project save into the same folder,
+    // and "handoff 12" should lead straight to its file.
+    const id = await archiveId($, root, (await $.state.get(TRANSCRIPTS)).value ?? [])
+    // A count lost to a restart must not overwrite a handoff already saved.
+    while (await $.fs.exists(`${root}/.claude/handoffs/${id}-handoff-${n}.md`)) n++
+    await $.fs.write(`${root}/.claude/handoffs/${id}-handoff-${n}.md`, text)
+    archived = `${ARCHIVE_DIR}/${id}-handoff-${n}.md`
     await $.state.set(SAVED, archived)
     await $.state.set(CHAIN, [...((await $.state.get(CHAIN)).value ?? []), archived].slice(-5))
-    await $.state.set(HANDOFFS, ((await $.state.get(HANDOFFS)).value ?? 0) + 1)
   } catch (err) {
-    // The archive is for people; the handoff itself is already held.
+    // The archive is for looking back; the handoff itself is already held.
     $.ui.toast(`context-handoff: could not archive the handoff (${String(err)})`)
   }
+  await $.state.set(HANDOFFS, n)
   $.ui.status('handoff: applying')
   return archived
 }
@@ -912,7 +994,8 @@ async function recorded($: EngineInterface, messages: readonly SessionMessage[],
     work: await backgroundWork($),
     // The handoff being applied is already in the seed, which names where it is saved.
     chain: handoff ? chain.filter(c => c !== saved) : chain,
-    plan: approvedPlan(messages),
+    // An agreement holds until a newer one replaces it, across handoffs.
+    plan: approvedPlan(messages) || (prior?.plan ?? ''),
     transcripts,
   })
 }
@@ -998,8 +1081,10 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: TOOL,
       description:
-        `Call only after a ${NOTICE} message. Replaces the conversation with the ` +
-        'handoff you pass, so the work continues in a fresh context.',
+        `Call only after a ${NOTICE} message. Replaces the conversation with the handoff you ` +
+        'pass, so the work continues in a fresh context that has the handoff and a record kept by ' +
+        'code, and nothing else of this one. Unless told to hand off now, call it once a piece of ' +
+        'work is finished, not partway through one.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1007,8 +1092,9 @@ export const register: Register = (on, options) => {
           skills: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Names of the loaded skills that still apply to the remaining work; leave out ones that ' +
-              'turned out irrelevant. Skills the user asked for are kept regardless. Omit to keep every loaded skill.',
+            description: 'Names of the loaded skills that still apply to the remaining work, as you invoked them ' +
+              '(such as "anthropic-skills:pdf"); leave out ones that turned out irrelevant. Skills the user asked ' +
+              'for are kept regardless. Omit to keep every loaded skill.',
           },
         },
         required: ['handoff'],
@@ -1094,19 +1180,33 @@ export const register: Register = (on, options) => {
             'thresholds or keeping handoffs shorter.')
         }
       }
+      // Tokens per step vary threefold between contexts, so the room left is also told in
+      // steps at this context's own pace.
+      const was = (await $.state.get(PACE)).value ?? { start: -1, steps: 0 }
+      const pace = was.start < 0 ? { start: used, steps: 0 } : { start: was.start, steps: was.steps + 1 }
+      await $.state.set(PACE, pace)
       const grown = used - baseline >= Math.max(soft * MIN_GROWTH_SHARE, MIN_GROWTH_TOKENS)
+      const of = `${k(used)} of ${k(context.window)} tokens used`
       if (grown && used >= firm) {
         await $.state.set(STAGE, 'firm')
         $.ui.status('handoff: now')
         await nudge($,
-          `${NOTICE} ${k(used)} tokens used. Stop starting work: bring what is in ` +
-          `progress to a resumable state now, then call ${TOOL} with the handoff.`)
+          `${NOTICE} ${of}: hand off now. Start nothing new. Bring what is in progress to a ` +
+          `resumable state (finish it only if that takes a step or two), then call ${TOOL} with ` +
+          `the handoff. From ${k(firm + GATE_MARGIN_TOKENS)}, other tools are refused; ToolSearch ` +
+          'and the task tools still work.')
       } else if (grown && used >= soft && stage === 'none') {
         await $.state.set(STAGE, 'soft')
         $.ui.status('handoff: at next stopping point')
+        const perStep = pace.steps >= MIN_PACE_STEPS ? (used - pace.start) / pace.steps : 0
+        const steps = perStep > 0
+          ? `, roughly ${Math.round((firm - used) / perStep)} more rounds of tool calls at this context's pace`
+          : ''
         await nudge($,
-          `${NOTICE} ${k(used)} tokens used. Continue the current unit of work to its ` +
-          `natural stopping point, start nothing new, then call ${TOOL} with the handoff.`)
+          `${NOTICE} ${of}. ${SOFT_ASK}; this is not urgent. You have about ${k(firm - used)} ` +
+          `tokens before the firm notice at ${k(firm)}${steps}: keep working as you were, finish the ` +
+          `task or subtask in progress and check it, then call ${TOOL} instead of starting the next ` +
+          'one. Handing off right after reading or planning throws that work away.')
       }
     }
     return yield* next(e)
@@ -1130,9 +1230,12 @@ export const register: Register = (on, options) => {
       if (text.length < MIN_HANDOFF_CHARS) {
         return { result: 'The handoff is missing or too thin. Pass the full handoff as `handoff`.', isError: true }
       }
-      const keep = Array.isArray(input.skills) ? input.skills.filter((n): n is string => typeof n === 'string') : ['*']
+      const keep = skillNames(input.skills)
       const archived = await accept($, text, keep)
-      return { result: `Handoff accepted (saved to ${archived}). End your turn now with a one-line summary; do no further work.` }
+      return {
+        result: `Handoff accepted${archived === '' ? '' : ` (saved to ${archived})`}. End your turn now with a ` +
+          'one-line summary; do no further work.',
+      }
     }
     if (e.tool === 'mcp__context-handoff__handoff_image') {
       const raw = e as unknown as { input?: Record<string, unknown> } & Record<string, unknown>
@@ -1158,7 +1261,10 @@ export const register: Register = (on, options) => {
     const { context } = await $.session.usage()
     const used = context.tokens ?? 0
     if (used < thresholds(context.window).firm + GATE_MARGIN_TOKENS) return next(e)
-    return { deny: `${NOTICE} ${k(used)} tokens used, past the handoff point. No more tool calls: call ${TOOL} with the handoff now.` }
+    return {
+      deny: `${NOTICE} ${k(used)} tokens used, past the handoff point. No more tool calls: call ${TOOL} ` +
+        'with the handoff now (ToolSearch loads it if it is not loaded; the task tools still work).',
+    }
   }).catch(($, e, next) => {
     // A failure never blocks work, and the handoff tool always gets an answer.
     if (next.called) return next(e)
@@ -1284,7 +1390,7 @@ export const register: Register = (on, options) => {
       // the middle of a turn) applies it, so it is consumed here and cannot apply twice.
       const held = (await $.state.get(HELD)).value ?? ''
       await $.state.set(HELD, '')
-      const body = held === '' ? handoff : `${handoff}\n\n## The user wrote this while the handoff was being applied\n\n${held}`
+      const body = held === '' ? handoff : `${handoff}\n\n${HELD_HEADING}\n\n${held}`
       // The record first: after a restart it restores the count and the chain the header reads.
       const record = await recorded($, e.messages, true)
       const saved = (await $.state.get(SAVED)).value ?? ''
@@ -1311,7 +1417,7 @@ export const register: Register = (on, options) => {
     const compacted = await next({ ...e, instructions })
     if (e.trigger !== 'precompute') await reset($)
     if (compacted.messages === undefined) return compacted
-    const after = `${RECORD_LEAD}\n${SEED_GUIDE.split('\n').slice(2, 5).join('\n')}\n\n${record}`
+    const after = `${RECORD_LEAD}\n${READ_RULES}\n\n${record}`
     return { ...compacted, messages: [...compacted.messages, { role: 'user' as const, text: after, toolUses: [] }] }
   }).catch(($, e, next) => next(e)) // a broken handoff must never stop a compaction
 }

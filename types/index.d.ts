@@ -10,6 +10,9 @@ declare module 'claude-code' {
       // notices wait for real growth past it, so a seed that already sits above a
       // threshold cannot hand off again and again.
       baseline: number
+      // This context's pace: its size at its first step (-1: measure at the next step) and
+      // the steps since. The soft notice turns the room left into steps at that pace.
+      pace: { start: number, steps: number }
       // Whether this context was asked again at the end of a turn that ended
       // without a handoff. A second such turn end gets a handoff written by a fork.
       reasked: boolean

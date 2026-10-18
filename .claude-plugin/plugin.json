@@ -1,6 +1,6 @@
 {
   "name": "context-handoff",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Long sessions that don't run out of room: at a natural stopping point Claude writes a handoff, the session restarts on it and keeps working, with your exact words, skills and plan carried over.",
   "author": {
     "name": "NateMateS",

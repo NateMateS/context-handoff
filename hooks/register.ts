@@ -101,13 +101,14 @@ A ${NOTICE} message asks for a handoff in one of two ways:
 - "${SOFT_ASK}": not urgent. It says how much room is left before a
   firm notice; until that notice comes, keep working as you were, without counting tokens.
   Hand off at the first point where the remaining work needs little of what you now hold:
-  the task or subtask in progress finished and checked, the user's question answered, or
-  a decision only the user can make. If the task in progress fits in the room left,
-  finish it first; if it cannot, stop at the milestone inside it that leaves the least to
-  rebuild, such as a part finished and tested. A pause is not a stopping point just
-  because nothing is half-edited: after reading, tracing or designing, carry out what that
-  understanding was for before you hand off, or the next context has to redo it. Once
-  the task is done, hand off instead of starting the next one.
+  the task or subtask in progress finished and checked, or the user's question answered.
+  If the task in progress fits in the room left, finish it first; if it cannot, stop at
+  the milestone inside it that leaves the least to rebuild, such as a part finished and
+  tested. A pause is not a stopping point just because nothing is half-edited: after
+  reading, tracing or designing, carry out what that understanding was for before you
+  hand off, or the next context has to redo it. Nor is a question you ask the user about
+  the work in progress, or a wait for work you started: what comes back will need what
+  you hold. Once the task is done, hand off instead of starting the next one.
 - "Now": start nothing new, bring what is in progress to a resumable state, and hand off.
 
 To hand off, call the ${TOOL} tool with the handoff as its \`handoff\` argument, and end your
@@ -118,8 +119,8 @@ work, named as you invoked them; skills the user asked for are kept regardless.
 Never call ${TOOL} unless a ${NOTICE} message asked for it.`
 
 const REASK =
-  `${NOTICE} Your turn ended without a handoff, and the end of a turn is a natural stopping ` +
-  `point. Call ${TOOL} with the handoff now. If you were waiting for the user, make that the Next step.`
+  `${NOTICE} Your turn ended without a handoff, and one was asked for now. Call ${TOOL} with ` +
+  'the handoff now. If you were waiting for the user, make that the Next step.'
 
 const FORK_PROMPT =
   `${NOTICE} Write the handoff for this conversation now. Reply with the handoff Markdown ` +
@@ -1356,10 +1357,13 @@ export const register: Register = (on, options) => {
       await applyHandoff($)
       return done
     }
-    if ((await getStage($)) === 'none') return done
-    // Asked, but the turn ended without a handoff. The end of a turn is itself a natural
-    // stopping point: ask once more, and if that turn also ends without one, have a fork
-    // of this context write it, so the handoff never rests on the model's compliance.
+    // Before the firm notice the model chooses the point: a turn can end on a question about
+    // the work in progress or to wait for work it started, and what comes back needs the
+    // context it has. A turn end decides nothing until the handoff is asked for now.
+    if ((await getStage($)) !== 'firm') return done
+    // Asked for now, but the turn ended without a handoff: ask once more, and if that turn
+    // also ends without one, have a fork of this context write it, so the handoff never
+    // rests on the model's compliance.
     if (!(await $.state.get(REASKED)).value) {
       await $.state.set(REASKED, true)
       submitLater($, REASK)

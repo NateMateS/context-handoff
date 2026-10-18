@@ -8,7 +8,7 @@
 - **The model that did the work writes the handoff.** The goal, status, decisions, verification, gotchas and next step come from the one context that actually knows them, written for a reader with none of its memory.
 - **What code can record, code records.** Your messages, the skills in use, the plan you approved, the task list, git state, files touched, commands run, pasted images, background work and scheduled wakeups are captured by the mod and carried over exactly. None of it depends on what a model remembers.
 - **Your words always win.** Every message you sent this session is carried over verbatim, across every handoff. Plugin prompts, command output and notifications are kept out of that record. The fresh context is told that where anything disagrees with your words, they win.
-- **It always happens.** If Claude doesn't hand off, the mod asks again, then a fork of the session writes the handoff, and finally other tool calls are refused. The window can't quietly fill up while it waits.
+- **It always happens.** Past the firm threshold, if Claude doesn't hand off, the mod asks again, then a fork of the session writes the handoff, and finally other tool calls are refused. The window can't quietly fill up while it waits.
 - **It's fast and hands-free.** Swapping the conversation for the handoff takes no model call, only about a tenth of a second. Work then resumes from the handoff's next step on its own.
 - **Nothing is lost.** Every handoff is archived in your project, and your messages are kept there in full. The fresh context also gets the path of the session's full transcript and a search command, for any detail the handoff left out.
 - **It survives restarts.** The record travels inside the handoff itself, so a session that was resumed after a restart or an update picks it up again.
@@ -24,13 +24,13 @@ These numbers come from a real session on Claude Code 2.1.291. Both times, after
 
 ## How it works
 
-1. **Soft notice.** Once the context passes the soft threshold (300k by default), Claude is told the handoff isn't urgent and how much room is left before the firm threshold: in tokens, and in steps at this context's own pace. It finishes the task in progress, or the part of it that leaves the least to rebuild, and hands off before starting the next one.
+1. **Soft notice.** Once the context passes the soft threshold (300k by default), Claude is told the handoff isn't urgent and how much room is left before the firm threshold: in tokens, and in steps at this context's own pace. It finishes the task in progress, or the part of it that leaves the least to rebuild, and hands off before starting the next one. Stopping to ask you something about the work, or to wait for a test run it started, doesn't count as a stopping point: what comes back needs what it has loaded. Until the firm threshold, when to hand off is Claude's call; the end of a turn doesn't force it.
 2. **Handoff.** Claude calls `handoff_ready` with the handoff and the names of the skills that still apply. A handoff that is too short is refused, and so is calling the tool without having been asked.
 3. **Reset and resume.** When the turn ends, the conversation is replaced by the handoff plus the mod's record, and work continues from the next step. If the next step is to wait for you, the fresh context says where things stand and waits.
 4. **If Claude doesn't hand off:**
-   - **Its turn ends without a handoff.** The end of a turn is itself a natural stopping point, so it is asked again.
-   - **That turn ends without one too.** A fork of the session writes the handoff from the same context. The fork has no tools and reads the conversation from the prompt cache.
    - **It keeps working past the firm threshold** (450k by default). It is told to stop and hand off now.
+   - **Its turn then ends without a handoff.** It is asked again. `/handoff now` counts the same way.
+   - **That turn ends without one too.** A fork of the session writes the handoff from the same context. The fork has no tools and reads the conversation from the prompt cache.
    - **It goes 40k past the firm threshold.** Every other tool call is refused. It can still load the handoff tool, bring its task list up to date and ask you a question.
 5. **Backstop.** If the window still fills, Claude Code's own auto-compact runs, so the session can't overflow. The mod asks for that summary in the handoff format and adds its record after it.
 
@@ -179,7 +179,7 @@ It reads back only that archive and the session's own conversation.
 **What it adds to the conversation.**
 
 - The handoff notices, once the context passes a threshold. Each says how much of the window is in use and asks for a handoff. The soft one also says how much room is left before the firm one.
-- If a turn ends without a handoff, a prompt asking for one again; `/handoff now` sends the same request.
+- If a turn ends without the handoff after the firm notice or `/handoff now`, a prompt asking for it again.
 - After the swap, a prompt to continue from the handoff's next step.
 - Any message you typed while the handoff was being applied, word for word.
 - An image you pasted earlier, when Claude asks for it through `handoff_image`.
@@ -198,7 +198,7 @@ It reads back only that archive and the session's own conversation.
 | `command.run` | Answers `/handoff`, and records slash commands you type with arguments. Passes every other command on unchanged. |
 | `prompt.submit` | Records your messages. While a handoff is being applied, holds what you type and sends it to the fresh context. |
 | `tool.call` | Answers `handoff_ready` and `handoff_image`, records your answers to Claude's questions, and refuses tool calls as described above. |
-| `turn.step`, `turn.complete` | Measure the context and add the notices. At the end of a turn, they ask again, start the fork, or apply the handoff. |
+| `turn.step`, `turn.complete` | Measure the context and add the notices. At the end of a turn, they apply the handoff, or after the firm notice ask again and then start the fork. |
 | `session.compact` | During a handoff, replaces the conversation with the handoff and the record. After any other compaction, adds the record after Claude Code's summary. |
 | `session.start`, `session.end`, `classic.Stop` | Register `handoff_ready`, `handoff_image` and `/handoff`, clear the record on `/clear`, and note the transcript file, background work and wakeups. |
 
@@ -282,6 +282,7 @@ The tests use the test kit of Claude Code 2.1.302 or later. They cover:
 - the last reply (including replies after the soft notice), task list (from `TodoWrite` and from `TaskCreate`/`TaskUpdate`, cleared once all of it is done), git state, files and commands;
 - images kept in parts and shown whole through `handoff_image`, with a damaged image or an unknown name refused;
 - earlier handoffs, saved by session and number and never overwritten, full text of long messages written once, earlier subagents, background work and scheduled wakeups;
+- a turn end before the firm notice, which asks nothing;
 - held messages and a reset that keeps failing;
 - restoring the record after a restart, from both the current and the older seed format;
 - `/handoff`.

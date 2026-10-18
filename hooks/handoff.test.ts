@@ -273,12 +273,24 @@ test("the seed carries the user's messages and changed files verbatim, across ha
   expect(s.seed).toContain('2. Also add tests.')
 })
 
-test('a turn that ends without a handoff is asked once more, then a fork writes it', async ($, on) => {
+test('before the firm notice, a turn that ends without a handoff is left to the model', async ($, on) => {
   const { s, step, turnEnds } = harness($, on)
   s.tokens = 320_000
   await step()
+  // It ended on a question about the work, or to wait for a test run: what comes back needs
+  // what this context holds, so nothing is asked and nothing is forked.
   await turnEnds()
-  expect(s.submitted.at(-1)).toContain('Your turn ended without a handoff')
+  await turnEnds()
+  expect(s.submitted.some(t => t.includes('Your turn ended without a handoff'))).toBe(false)
+  expect(s.seed).toBe('')
+})
+
+test('a turn that ends without the handoff asked for now is asked once more, then a fork writes it', async ($, on) => {
+  const { s, step, turnEnds } = harness($, on)
+  s.tokens = 460_000
+  await step()
+  await turnEnds()
+  expect(s.submitted.at(-1)).toContain('Your turn ended without a handoff, and one was asked for now')
   s.fork = HANDOFF
   await turnEnds()
   expect(s.seed).toContain('# Handoff')
@@ -287,7 +299,7 @@ test('a turn that ends without a handoff is asked once more, then a fork writes 
 
 test('a fork that fails leaves the session as it was, with a notice', async ($, on) => {
   const { s, step, turnEnds } = harness($, on)
-  s.tokens = 320_000
+  s.tokens = 460_000
   await step()
   await turnEnds()
   await turnEnds()

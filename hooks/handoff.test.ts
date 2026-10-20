@@ -160,13 +160,18 @@ test('the soft notice says it is not urgent and how much room is left; the firm 
   const soft = notices()[0]!
   expect(soft).toContain('320k of 1000k tokens used. Hand off at your next natural stopping point; this is not urgent.')
   expect(soft).toContain('about 130k tokens before the firm notice at 450k')
-  expect(soft).toContain('finish the task or subtask in progress and check it')
-  expect(soft).toContain('instead of starting the next one')
+  expect(soft).toContain('If the task in progress fits in that room, finish it first, with its checks and ' +
+    'the write-up of its results: that work uses what you have loaded, which a fresh context would have to read again.')
+  expect(soft).toContain('Then call handoff_ready before you start work that needs its own fresh reading, ' +
+    'such as the next task.')
+  expect(soft).toContain('If the task won\'t fit, hand off after you finish and check one part of it, before ' +
+    'you start the next.')
+  expect(soft).not.toContain('subtask')
   s.tokens = 460_000
   await step()
   const firm = notices()[1]!
   expect(firm).toContain('460k of 1000k tokens used: hand off now.')
-  expect(firm).toContain('From 490k, other tools are refused; ToolSearch and the task tools still work.')
+  expect(firm).toContain('From 490k, other tools are refused; ToolSearch and the task-list tools still work.')
   expect(firm).not.toContain('natural stopping point')
 })
 
@@ -180,7 +185,23 @@ test('the soft notice also tells the room in steps at this context\'s own pace',
   }
   expect(notices()[0]).toContain('300k of 1000k tokens used.')
   expect(notices()[0]).toContain('about 150k tokens before the firm notice at 450k, roughly 15 more rounds of ' +
-    'tool calls at this context\'s pace: keep working')
+    'tool calls at this context\'s recent pace: keep working')
+})
+
+test('the pace is the recent one, not an average over the reading that began the context', async ($, on) => {
+  const { s, step, notices } = harness($, on)
+  // 10 steps of 15k reading from 100k, then 25 steps of 2k: 75 rounds at 2k, not 26 at the average.
+  await step()
+  for (let i = 0; i < 10; i++) {
+    s.tokens += 15_000
+    await step()
+  }
+  for (let i = 0; i < 25; i++) {
+    s.tokens += 2_000
+    await step()
+  }
+  expect(notices()[0]).toContain('300k of 1000k tokens used.')
+  expect(notices()[0]).toContain('roughly 75 more rounds of tool calls at this context\'s recent pace')
 })
 
 test('what the user last read runs past the soft notice, up to the handoff call or a notice that asks for it now', () => {
@@ -281,7 +302,7 @@ test('before the firm notice, a turn that ends without a handoff is left to the 
   // what this context holds, so nothing is asked and nothing is forked.
   await turnEnds()
   await turnEnds()
-  expect(s.submitted.some(t => t.includes('Your turn ended without a handoff'))).toBe(false)
+  expect(s.submitted.some(t => t.includes('Your turn ended without'))).toBe(false)
   expect(s.seed).toBe('')
 })
 
@@ -290,7 +311,8 @@ test('a turn that ends without the handoff asked for now is asked once more, the
   s.tokens = 460_000
   await step()
   await turnEnds()
-  expect(s.submitted.at(-1)).toContain('Your turn ended without a handoff, and one was asked for now')
+  expect(s.submitted.at(-1)).toContain('Your turn ended without the handoff that was asked for. Call handoff_ready ' +
+    'with the handoff now.')
   s.fork = HANDOFF
   await turnEnds()
   expect(s.seed).toContain('# Handoff')
@@ -315,9 +337,9 @@ test('a message sent while the handoff is applied reaches the fresh context', as
   const dropped = await $.prompt.submit({ text: 'and use tabs', origin: { kind: 'composer' } } as never)
   expect(JSON.stringify(dropped)).toContain('Handing off')
   await turnEnds()
-  expect(s.seed).toContain('## The user wrote this while the handoff was being applied\n\nand use tabs')
+  expect(s.seed).toContain('## The user wrote this during the handoff\n\nand use tabs')
   // The fresh context answers it before the Next step, which was written without it.
-  expect(s.submitted.at(-1)).toContain('If it ends with what the user wrote while it was being applied, answer that first')
+  expect(s.submitted.at(-1)).toContain('If it ends with a message the user wrote during the handoff, answer that first')
 })
 
 test('background work still running is recorded in the seed', async ($, on) => {
@@ -423,7 +445,7 @@ test('well past the firm threshold, other tool calls are refused until the hando
   await step()
   expect(await read()).toContain('ran')
   s.tokens = 495_000
-  expect(await read()).toContain('No more tool calls')
+  expect(await read()).toContain('Other tools are refused from here, except ToolSearch')
   // The task list can still be brought up to date before the handoff.
   for (const tool of ['TaskUpdate', 'TaskCreate', 'TaskList', 'TodoWrite', 'TaskStop']) {
     expect(JSON.stringify(await $.tool.call({ tool, input: {} } as never))).toContain('ran')
@@ -636,7 +658,7 @@ test('the seed reads in order: guide, skills, messages, state, earlier handoffs,
   expect(s.seed).toContain('It is saved in .claude/handoffs/sess-1-handoff-2.md.')
   // The name that reaches the handoffs not listed, and only this session's.
   expect(earlier).toContain('Handoff N of this session is saved as .claude/handoffs/sess-1-handoff-N.md, and ' +
-    ".claude/handoffs/sess-1-handoff-*.md matches this session's alone")
+    ".claude/handoffs/sess-1-handoff-*.md matches only this session's")
   // Messages already written in full are not written again.
   expect(s.files.get('H:/proj/.claude/handoffs/sess-1-messages.md')?.match(/## Message /g)?.length).toBe(2)
 })

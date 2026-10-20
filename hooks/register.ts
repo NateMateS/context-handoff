@@ -50,17 +50,17 @@ ${READ_RULES}
 - The handoff at the end was written by the previous context: its best understanding, not
   ground truth. Check what it marks unverified before building on it.
 - Do not recap this to the user or announce the handoff; carry on as if nothing happened.`
-const HELD_HEADING = '## The user wrote this while the handoff was being applied'
+const HELD_HEADING = '## The user wrote this during the handoff'
 // Shared by the old wording ("above, starting with its Next step"), so either is known as the mod's.
 const RESUME_LEAD = 'Continue the work from the handoff above'
 const RESUME =
-  `${RESUME_LEAD}. If it ends with what the user wrote while it was being applied, answer that ` +
+  `${RESUME_LEAD}. If it ends with a message the user wrote during the handoff, answer that ` +
   'first; otherwise start with its Next step. If the Next step is to wait for the user, tell ' +
   'them in a line or two where things stand and stop.'
 
 const HANDOFF_TEMPLATE = `Write the handoff as Markdown with these sections, for a reader with none of your
-context: name things fully, give paths, define your shorthand. It is the judgment half. The
-record beside it already holds, word for word, the user's messages, the skills still in use,
+context: name things fully, give paths, define your shorthand. A record kept by code goes
+beside it and already holds, word for word, the user's messages, the skills still in use,
 the approved plan, the task list, git state, the last commands, pasted images and background
 work, and the paths of the files touched and of the session's full transcript: point to
 those, don't copy them. Everything else the next context needs goes in the handoff itself.
@@ -80,7 +80,7 @@ holds, written out in full rather than pointed to; drop only what is resolved, a
 5. Verification: what is proven and how (the exact commands to build, test or reproduce,
    and their last result), and what is still unverified.
 6. Open questions: anything unresolved, waiting on the user, or assumed but not checked.
-7. Gotchas: anything non-obvious the next instance would otherwise rediscover the hard way.
+7. Gotchas: anything non-obvious the next context would otherwise rediscover the hard way.
 8. Next step: the exact next action and what to read first for it (paths, line ranges), so
    the next context loads only what it needs; then the remaining plan in order. If the
    user's latest message is not fully answered, answering it comes first. If the work is
@@ -94,21 +94,27 @@ When this context grows large, the session hands off to a fresh one: you write a
 the conversation is replaced by it, and the work goes on. The fresh context starts from
 your handoff and a record kept by code (the user's messages, the task list, git state, the
 files touched and more), nothing else. Whatever you have loaded here (files read, code
-traced, output examined, a design worked out) it has to rebuild before it can act on it,
-so where you hand off decides what the handoff costs.
+traced, output examined, a design worked out), it has to read or work out again before
+it can use it, so where you hand off decides what the handoff costs.
 
 A ${NOTICE} message asks for a handoff in one of two ways:
 - "${SOFT_ASK}": not urgent. It says how much room is left before a
   firm notice; until that notice comes, keep working as you were, without counting tokens.
-  Hand off at the first point where the remaining work needs little of what you now hold:
-  the task or subtask in progress finished and checked, or the user's question answered.
-  If the task in progress fits in the room left, finish it first; if it cannot, stop at
-  the milestone inside it that leaves the least to rebuild, such as a part finished and
-  tested. A pause is not a stopping point just because nothing is half-edited: after
-  reading, tracing or designing, carry out what that understanding was for before you
-  hand off, or the next context has to redo it. Nor is a question you ask the user about
-  the work in progress, or a wait for work you started: what comes back will need what
-  you hold. Once the task is done, hand off instead of starting the next one.
+  Hand off when your next piece of work would make little use of what you have loaded
+  here. Until then, keep going as long as the work fits in the room left. Work that uses
+  what you have loaded comes first: the rest of a change you started, its tests and
+  checks, the write-up of results you just produced, the next step of an investigation.
+  Hand off before work that needs its own fresh reading anyway: the next item of a list,
+  or whatever the user asks once the task is done and reported. If the task in progress is
+  too big to finish in the room left, hand off after you finish and check one part of it,
+  before you start the next. That way no reading is wasted: the fresh context reads only
+  what the next part needs, which you would have had to read too. If you stop in the
+  middle of a part, the fresh context has to read again what you already read, just to
+  finish that part. The moment right after you read, trace or design something is not a
+  stopping point, even though nothing is half-edited: act on what you learned before you
+  hand off, or the next context has to learn it again. A question you ask the user about
+  the work in progress is not a stopping point either, and neither is a wait for work you
+  started, such as a test run: the answer or the result will need what you have loaded.
 - "Now": start nothing new, bring what is in progress to a resumable state, and hand off.
 
 To hand off, call the ${TOOL} tool with the handoff as its \`handoff\` argument, and end your
@@ -119,8 +125,8 @@ work, named as you invoked them; skills the user asked for are kept regardless.
 Never call ${TOOL} unless a ${NOTICE} message asked for it.`
 
 const REASK =
-  `${NOTICE} Your turn ended without a handoff, and one was asked for now. Call ${TOOL} with ` +
-  'the handoff now. If you were waiting for the user, make that the Next step.'
+  `${NOTICE} Your turn ended without the handoff that was asked for. Call ${TOOL} with the ` +
+  'handoff now. If you were waiting for the user, make that the Next step.'
 
 const FORK_PROMPT =
   `${NOTICE} Write the handoff for this conversation now. Reply with the handoff Markdown ` +
@@ -152,6 +158,8 @@ const APPLYING = { plugin: 'context-handoff', key: 'applying' } as const
 const PACE = { plugin: 'context-handoff', key: 'pace' } as const
 // Below this many steps, a context's pace says too little to put a number on the room left.
 const MIN_PACE_STEPS = 10
+// The steps a context's recent pace is measured over.
+const PACE_WINDOW = 20
 const HOLDING = { plugin: 'context-handoff', key: 'holding' } as const
 // How long a handoff, from acceptance through its application, may hold the user's messages.
 const APPLY_WINDOW_MS = 60_000
@@ -182,7 +190,7 @@ async function reset($: EngineInterface) {
   await $.state.set(STAGE, 'none')
   await $.state.set(HANDOFF, '')
   await $.state.set(BASELINE, -1)
-  await $.state.set(PACE, { start: -1, steps: 0 })
+  await $.state.set(PACE, [])
   await $.state.set(REASKED, false)
   await $.state.set(APPLYING, 0)
   await $.state.set(HOLDING, 0)
@@ -682,7 +690,8 @@ function recordBlock(r: Carried): string {
     const several = r.transcripts.length > 1 ? ', oldest first: the session moved to a new file when it was resumed' : ''
     parts.push(`${WHOLE_HEADING}\nEvery earlier message and tool result, one JSON object per line, each handoff ` +
       `starting at a "compact_boundary" line${several}:\n${bullets(r.transcripts)}\n` +
-      'When you need a detail nothing here has, search rather than reading whole: ' +
+      `When you need a detail nothing here has, search ${r.transcripts.length > 1 ? 'the files' : 'the file'} ` +
+      `rather than reading ${r.transcripts.length > 1 ? 'them' : 'it'} whole: ` +
       `\`grep -n -i -o -E '.{0,300}TERM.{0,300}' ${r.transcripts.map(t => `"${t}"`).join(' ')} | head -20\`.`)
   }
   if (r.chain.length > 0) {
@@ -690,7 +699,7 @@ function recordBlock(r: Carried): string {
     // before handoffs were named that way has no such name to give.
     const name = /^(.+-handoff-)\d+\.md$/.exec(r.chain.at(-1)!)?.[1]
     const rest = name === undefined ? '' : ` Handoff N of this session is saved as ${name}N.md, and ` +
-      `${name}*.md matches this session's alone: the folder also holds other sessions' handoffs.`
+      `${name}*.md matches only this session's: the folder also holds other sessions' handoffs.`
     parts.push(`${CHAIN_HEADING}\nRead one when a past decision or detail matters that the handoff below ` +
       `leaves out.${rest}\n${bullets(r.chain)}`)
   }
@@ -1082,10 +1091,11 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: TOOL,
       description:
-        `Call only after a ${NOTICE} message. Replaces the conversation with the handoff you ` +
-        'pass, so the work continues in a fresh context that has the handoff and a record kept by ' +
-        'code, and nothing else of this one. Unless told to hand off now, call it once a piece of ' +
-        'work is finished, not partway through one.',
+        `Call only after a ${NOTICE} message. It replaces the conversation with the handoff you ` +
+        'pass: the work continues in a fresh context that has only the handoff and a record kept by ' +
+        'code. Call it after you finish and check the task in progress. If the task is too big to ' +
+        'finish in the room left, call it after you finish one part of the task and before you start ' +
+        'the next. Never call it in the middle of a part, unless you were told to hand off now.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1182,10 +1192,12 @@ export const register: Register = (on, options) => {
         }
       }
       // Tokens per step vary threefold between contexts, so the room left is also told in
-      // steps at this context's own pace.
-      const was = (await $.state.get(PACE)).value ?? { start: -1, steps: 0 }
-      const pace = was.start < 0 ? { start: used, steps: 0 } : { start: was.start, steps: was.steps + 1 }
-      await $.state.set(PACE, pace)
+      // steps at this context's own pace: its recent pace, since its early steps, spent
+      // reading, cost about twice its later ones. An earlier version's value is no list and
+      // starts over.
+      const was = (await $.state.get(PACE)).value
+      const sizes = [...(Array.isArray(was) ? was : []), used].slice(-(PACE_WINDOW + 1))
+      await $.state.set(PACE, sizes)
       const grown = used - baseline >= Math.max(soft * MIN_GROWTH_SHARE, MIN_GROWTH_TOKENS)
       const of = `${k(used)} of ${k(context.window)} tokens used`
       if (grown && used >= firm) {
@@ -1195,19 +1207,22 @@ export const register: Register = (on, options) => {
           `${NOTICE} ${of}: hand off now. Start nothing new. Bring what is in progress to a ` +
           `resumable state (finish it only if that takes a step or two), then call ${TOOL} with ` +
           `the handoff. From ${k(firm + GATE_MARGIN_TOKENS)}, other tools are refused; ToolSearch ` +
-          'and the task tools still work.')
+          'and the task-list tools still work.')
       } else if (grown && used >= soft && stage === 'none') {
         await $.state.set(STAGE, 'soft')
         $.ui.status('handoff: at next stopping point')
-        const perStep = pace.steps >= MIN_PACE_STEPS ? (used - pace.start) / pace.steps : 0
+        const perStep = sizes.length > MIN_PACE_STEPS ? (used - sizes[0]!) / (sizes.length - 1) : 0
         const steps = perStep > 0
-          ? `, roughly ${Math.round((firm - used) / perStep)} more rounds of tool calls at this context's pace`
+          ? `, roughly ${Math.round((firm - used) / perStep)} more rounds of tool calls at this context's recent pace`
           : ''
         await nudge($,
           `${NOTICE} ${of}. ${SOFT_ASK}; this is not urgent. You have about ${k(firm - used)} ` +
-          `tokens before the firm notice at ${k(firm)}${steps}: keep working as you were, finish the ` +
-          `task or subtask in progress and check it, then call ${TOOL} instead of starting the next ` +
-          'one. Handing off right after reading or planning throws that work away.')
+          `tokens before the firm notice at ${k(firm)}${steps}: keep working as you were. If the task ` +
+          'in progress fits in that room, finish it first, with its checks and the write-up of its ' +
+          'results: that work uses what you have loaded, which a fresh context would have to read ' +
+          `again. Then call ${TOOL} before you start work that needs its own fresh reading, such as ` +
+          'the next task. If the task won\'t fit, hand off after you finish and check one part of it, ' +
+          'before you start the next. Handing off right after reading or planning throws that work away.')
       }
     }
     return yield* next(e)
@@ -1234,8 +1249,8 @@ export const register: Register = (on, options) => {
       const keep = skillNames(input.skills)
       const archived = await accept($, text, keep)
       return {
-        result: `Handoff accepted${archived === '' ? '' : ` (saved to ${archived})`}. End your turn now with a ` +
-          'one-line summary; do no further work.',
+        result: `Handoff accepted${archived === '' ? '' : ` (saved to ${archived})`}. End your turn now with ` +
+          'one line telling the user where things stand; do no further work.',
       }
     }
     if (e.tool === 'mcp__context-handoff__handoff_image') {
@@ -1263,8 +1278,9 @@ export const register: Register = (on, options) => {
     const used = context.tokens ?? 0
     if (used < thresholds(context.window).firm + GATE_MARGIN_TOKENS) return next(e)
     return {
-      deny: `${NOTICE} ${k(used)} tokens used, past the handoff point. No more tool calls: call ${TOOL} ` +
-        'with the handoff now (ToolSearch loads it if it is not loaded; the task tools still work).',
+      deny: `${NOTICE} ${k(used)} tokens used, and the handoff is overdue. Other tools are refused from ` +
+        `here, except ToolSearch (to load ${TOOL} if it isn't loaded yet) and the task-list tools: call ` +
+        `${TOOL} with the handoff now.`,
     }
   }).catch(($, e, next) => {
     // A failure never blocks work, and the handoff tool always gets an answer.

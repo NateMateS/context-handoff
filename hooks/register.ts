@@ -31,6 +31,9 @@ const MIN_HANDOFF_CHARS = 200
 const MAX_MESSAGE_CHARS = 2_000
 const MAX_LOG_CHARS = 12_000
 const MAX_FILES = 40
+// A commit's line in the record's git state. Some repositories put a whole message on its
+// subject line, thousands of characters, and every fresh context would read it.
+const MAX_COMMIT_CHARS = 200
 // Skills carried into the fresh context word for word, together; past this, by name only.
 const MAX_SKILL_CHARS = 40_000
 const SKILL_LEAD = 'Base directory for this skill:'
@@ -1018,7 +1021,10 @@ async function gitState($: EngineInterface): Promise<string> {
     const lines = status.stdout.trimEnd().split('\n')
     const shown = lines.length > 30 ? [...lines.slice(0, 30), `… ${lines.length - 30} more`] : lines
     const log = await $.process.run(['git', 'log', '--oneline', '-5'], { timeoutMs: 5_000 })
-    return [...shown, '', 'Last commits:', log.exitCode === 0 ? log.stdout.trimEnd() : '(none)'].join('\n')
+    const commits = log.exitCode === 0
+      ? log.stdout.trimEnd().split('\n').map(line => clip(line, MAX_COMMIT_CHARS)).join('\n')
+      : '(none)'
+    return [...shown, '', 'Last commits:', commits].join('\n')
   } catch {
     return ''
   }

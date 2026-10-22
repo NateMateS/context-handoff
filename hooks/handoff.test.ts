@@ -549,7 +549,7 @@ test('the record carries the last reply, task list, git state, reads, commands a
   on('process.run', ($, e) => {
     runs.push({ argv: e.argv, stdin: e.init?.stdin, env: e.init?.env })
     if (e.argv[0] === 'git' && e.argv[1] === 'status') return { value: { exitCode: 0, stdout: '## main\n M src/a.ts\n', stderr: '' } } as never
-    if (e.argv[0] === 'git') return { value: { exitCode: 0, stdout: 'abc123 fix parser\n', stderr: '' } } as never
+    if (e.argv[0] === 'git') return { value: { exitCode: 0, stdout: `abc123 fix parser\ndef456 ${'x'.repeat(5_000)}\n`, stderr: '' } } as never
     return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
   })
   on('session.messages', () => ({
@@ -574,7 +574,9 @@ test('the record carries the last reply, task list, git state, reads, commands a
   expect(s.seed).toContain('### What the user last read from you (recorded)\nThe far roof needs a second pass. Shall I keep the slope?')
   expect(s.seed).toContain('[in_progress] Fix the far roof')
   expect(s.seed).toContain('## main')
-  expect(s.seed).toContain('abc123 fix parser')
+  expect(s.seed).toContain('abc123 fix parser\ndef456 ')
+  // A whole commit message on its subject line is clipped, not carried into every seed.
+  expect(s.seed).toContain(`def456 ${'x'.repeat(193)}… [4807 more characters]`)
   expect(s.seed).toContain('### Other files opened with Read in the previous context (recorded)\n- src/roof.ts')
   expect(s.seed).toContain('failed: npm test')
   expect(s.seed).toMatch(/\.claude\/handoffs\/image-[0-9a-f]{8}\.jpg\.b64 \(with "\[Image #1\] The roof looks broken"\)/)
